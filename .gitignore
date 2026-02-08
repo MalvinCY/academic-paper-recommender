@@ -205,3 +205,23 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+data/raw/
+data/processed/
+models/
+*.pkl
+*.npy
+*.index
+*.faiss
+
+# Large files
+*.csv
+*.json.gz
+
+# Jupyter
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Environment
+.env
