@@ -1,10 +1,7 @@
 services:
   - type: web
     name: paper-recommender-api
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: pip install --upgrade pip && pip install -r requirements_api.txt
-    startCommand: cd api && uvicorn app:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.14
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
