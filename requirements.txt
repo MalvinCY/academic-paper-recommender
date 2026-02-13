@@ -1,24 +1,4 @@
-# Data Collection
-arxiv==2.1.0
-requests==2.31.0
-
-# NLP & Embeddings
-sentence-transformers==2.7.0
-transformers==4.44.0
-torch==2.0.1
-
-# Vector Search
-faiss-cpu==1.8.0
-
-# Data Processing
+streamlit==1.31.0
 numpy==1.24.3
 pandas==2.0.3
-tqdm==4.66.1
-
-# API
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-
-# Utilities
-python-dotenv==1.0.0
+faiss-cpu==1.8.0
