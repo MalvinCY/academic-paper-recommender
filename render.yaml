@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: paper-recommender-api
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    dockerContext: .

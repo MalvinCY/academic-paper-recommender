@@ -219,6 +219,9 @@ models/
 *.csv
 *.json.gz
 
+# Presentations (personal learning material)
+*.pptx
+
 # Jupyter
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*

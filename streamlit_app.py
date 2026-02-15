@@ -1,7 +1,16 @@
 """
-Academic Paper Recommender - Streamlit Interface
+Streamlit interface for the Academic Paper Recommender.
 
-Discover relevant research papers using SPECTER2 embeddings and FAISS similarity search.
+Provides an interactive frontend for discovering relevant research papers
+via semantic similarity search. Papers are represented as SPECTER2
+embeddings and indexed with FAISS for nearest-neighbour retrieval.
+
+Interaction modes:
+    1. Find Similar Papers — search by paper ID or title keywords
+    2. Explore Random — random paper selection with neighbours
+    3. Browse by Category — filter by arXiv discipline and subcategory
+
+Author: Malvin Siew
 """
 
 import streamlit as st
@@ -10,21 +19,30 @@ import pandas as pd
 import faiss
 import os
 
-# Page config
+# ---------------------------------------------------------------------------
+# Page configuration
+# ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="Academic Paper Recommender", page_icon="📚", layout="wide"
 )
 
-# Paths
+# ---------------------------------------------------------------------------
+# File paths — all processed data lives in data/processed/
+# ---------------------------------------------------------------------------
 DATA_DIR = "data/processed"
 EMBEDDINGS_PATH = os.path.join(DATA_DIR, "embeddings_normalized.npy")
 INDEX_PATH = os.path.join(DATA_DIR, "papers.index")
 PAPERS_PATH = os.path.join(DATA_DIR, "papers_with_embeddings.pkl")
 
 
-# Category formatting function
-def format_category(cat):
-    """Convert arXiv category codes to readable names"""
+# ---------------------------------------------------------------------------
+# Category helpers
+# ---------------------------------------------------------------------------
+def format_category(cat: str) -> str:
+    """Map an arXiv category code to its human-readable name.
+
+    Falls back to the raw code when no mapping exists.
+    """
     category_names = {
         # Computer Science
         "cs.AI": "Artificial Intelligence",
@@ -68,12 +86,12 @@ def format_category(cat):
         "cs.SI": "Social & Information Networks",
         "cs.SY": "Systems & Control",
         # Statistics
-        "stat.AP": "Statistics - Applications",
-        "stat.CO": "Statistics - Computation",
-        "stat.ME": "Statistics - Methodology",
-        "stat.ML": "Statistics - Machine Learning",
-        "stat.OT": "Statistics - Other",
-        "stat.TH": "Statistics - Theory",
+        "stat.AP": "Statistics — Applications",
+        "stat.CO": "Statistics — Computation",
+        "stat.ME": "Statistics — Methodology",
+        "stat.ML": "Statistics — Machine Learning",
+        "stat.OT": "Statistics — Other",
+        "stat.TH": "Statistics — Theory",
         # Mathematics
         "math.AC": "Commutative Algebra",
         "math.AG": "Algebraic Geometry",
@@ -99,7 +117,7 @@ def format_category(cat):
         "math.NA": "Numerical Analysis",
         "math.NT": "Number Theory",
         "math.OA": "Operator Algebras",
-        "math.OC": "Optimization & Control",
+        "math.OC": "Optimisation & Control",
         "math.PR": "Probability",
         "math.QA": "Quantum Algebra",
         "math.RA": "Rings & Algebras",
@@ -125,12 +143,12 @@ def format_category(cat):
         "cond-mat.str-el": "Strongly Correlated",
         "cond-mat.supr-con": "Superconductivity",
         "gr-qc": "General Relativity",
-        "hep-ex": "High Energy Physics - Experiment",
-        "hep-lat": "High Energy Physics - Lattice",
-        "hep-ph": "High Energy Physics - Phenomenology",
-        "hep-th": "High Energy Physics - Theory",
+        "hep-ex": "High Energy Physics — Experiment",
+        "hep-lat": "High Energy Physics — Lattice",
+        "hep-ph": "High Energy Physics — Phenomenology",
+        "hep-th": "High Energy Physics — Theory",
         "math-ph": "Mathematical Physics",
-        "nlin.AO": "Adaptation & Self-Organizing",
+        "nlin.AO": "Adaptation & Self-Organising",
         "nlin.CD": "Chaotic Dynamics",
         "nlin.CG": "Cellular Automata",
         "nlin.PS": "Pattern Formation",
@@ -160,7 +178,7 @@ def format_category(cat):
         "physics.soc-ph": "Physics & Society",
         "physics.space-ph": "Space Physics",
         "quant-ph": "Quantum Physics",
-        # Other
+        # Quantitative Biology, Finance, Economics, Electrical Engineering
         "q-bio.BM": "Biomolecules",
         "q-bio.CB": "Cell Behavior",
         "q-bio.GN": "Genomics",
@@ -191,8 +209,8 @@ def format_category(cat):
     return category_names.get(cat, cat)
 
 
-def get_main_discipline(cat):
-    """Extract main discipline from category code"""
+def get_main_discipline(cat: str) -> str:
+    """Map an arXiv category code to its parent discipline for UI grouping."""
     if cat.startswith("cs."):
         return "Computer Science"
     elif cat.startswith("stat."):
@@ -200,15 +218,8 @@ def get_main_discipline(cat):
     elif cat.startswith("math."):
         return "Mathematics"
     elif cat.startswith("physics.") or cat in [
-        "gr-qc",
-        "hep-ex",
-        "hep-lat",
-        "hep-ph",
-        "hep-th",
-        "math-ph",
-        "nucl-ex",
-        "nucl-th",
-        "quant-ph",
+        "gr-qc", "hep-ex", "hep-lat", "hep-ph", "hep-th",
+        "math-ph", "nucl-ex", "nucl-th", "quant-ph",
     ]:
         return "Physics"
     elif cat.startswith("astro-ph"):
@@ -229,43 +240,57 @@ def get_main_discipline(cat):
         return "Other"
 
 
-# Cache data loading
+# ---------------------------------------------------------------------------
+# Data loading (cached so it only runs once per session)
+# ---------------------------------------------------------------------------
 @st.cache_resource
 def load_data():
-    """Load embeddings, FAISS index, and paper metadata"""
+    """Load normalised embeddings, FAISS index, and paper metadata.
+
+    Cached via @st.cache_resource to persist across page interactions.
+    """
     embeddings = np.load(EMBEDDINGS_PATH)
     index = faiss.read_index(INDEX_PATH)
     df = pd.read_pickle(PAPERS_PATH)
     return embeddings, index, df
 
 
-# Load data
 with st.spinner("Loading data..."):
     embeddings, index, df = load_data()
 
 
-# Helper function
-def get_recommendations(paper_idx, k=5):
-    """Get k similar papers"""
+# ---------------------------------------------------------------------------
+# Recommendation logic
+# ---------------------------------------------------------------------------
+def get_recommendations(paper_idx: int, k: int = 5):
+    """Return indices and cosine similarities for the k nearest papers.
+
+    Embeddings are L2-normalised, so FAISS distances are converted to
+    cosine similarity via sim = 1 - (dist^2 / 2).
+    """
     query_vector = embeddings[paper_idx : paper_idx + 1].astype("float32")
     distances, indices = index.search(query_vector, k + 1)
 
-    # Skip first result (query itself)
+    # The first result is always the query paper itself — skip it
     result_indices = indices[0][1:]
     result_distances = distances[0][1:]
 
-    # Convert to similarities
+    # Convert L2 distances to cosine similarities
     similarities = 1 - (result_distances**2) / 2
 
     return result_indices, similarities
 
 
-# ============= UI =============
+# ===================================================================
+# USER INTERFACE
+# ===================================================================
 
 st.title("📚 Academic Paper Recommender")
 st.markdown("*Discover relevant research papers using semantic similarity*")
 
-# Sidebar
+# ---------------------------------------------------------------------------
+# Sidebar — dataset info and usage guide
+# ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("About")
     st.info("""
@@ -285,24 +310,25 @@ with st.sidebar:
     1. **Find Similar Papers**: Enter a paper ID or search by title
     2. **Explore Random**: Discover papers randomly
     3. **Browse by Category**: Filter by discipline and category
-    
-    💡 **Tip**: Click "Get Similar Papers" on any paper to find related research!
     """)
 
-# Main content
+# ---------------------------------------------------------------------------
+# Main content — three tabs
+# ---------------------------------------------------------------------------
 tab1, tab2, tab3 = st.tabs(
     ["🔍 Find Similar Papers", "🎲 Explore Random", "📊 Browse by Category"]
 )
 
+# ---------------------------------------------------------------------------
 # Tab 1: Find Similar Papers
+# ---------------------------------------------------------------------------
 with tab1:
     st.header("Find Papers Similar to...")
 
-    # Check if paper_id came from URL parameter
+    # Support deep-linking via URL query parameter
     query_params = st.query_params
     url_paper_id = query_params.get("paper_id", "")
 
-    # Search by paper ID or title
     search_method = st.radio(
         "Search by:", ["Paper ID", "Title Keywords"], horizontal=True
     )
@@ -310,12 +336,12 @@ with tab1:
     if search_method == "Paper ID":
         paper_id_input = st.text_input(
             "Enter arXiv Paper ID:",
-            value=url_paper_id,  # Pre-fill if from URL
+            value=url_paper_id,
             placeholder="e.g., 2301.07041 or 1706.03762v1",
             help="Try the 'Explore Random' tab to get valid paper IDs",
         )
 
-        # Auto-trigger if URL has paper_id
+        # Trigger search automatically if a paper_id came via URL
         should_search = bool(url_paper_id) or st.button(
             "Get Recommendations", type="primary"
         )
@@ -325,69 +351,80 @@ with tab1:
 
             if len(matching) == 0:
                 st.error(
-                    f"Paper '{paper_id_input}' not found. Try searching by title or use 'Explore Random'."
+                    f"Paper '{paper_id_input}' not found. "
+                    "Try searching by title or use 'Explore Random'."
                 )
             else:
                 query_paper = matching.iloc[0]
                 query_idx = matching.index[0]
 
-                # Display query paper
                 st.subheader("📄 Query Paper")
                 with st.container():
                     st.markdown(f"**{query_paper['title']}**")
                     st.caption(
-                        f"Categories: {', '.join(eval(query_paper['categories']))} | Published: {query_paper['published']}"
+                        f"Categories: {', '.join(eval(query_paper['categories']))} "
+                        f"| Published: {query_paper['published']}"
                     )
                     with st.expander("View Abstract"):
                         st.write(query_paper["abstract"])
 
-                # Get recommendations
                 num_recs = st.slider("Number of recommendations:", 3, 10, 5)
-                rec_indices, similarities = get_recommendations(query_idx, k=num_recs)
+                rec_indices, similarities = get_recommendations(
+                    query_idx, k=num_recs
+                )
 
                 st.subheader(f"🎯 Top {num_recs} Similar Papers")
 
-                for i, (idx, sim) in enumerate(zip(rec_indices, similarities), 1):
+                for i, (idx, sim) in enumerate(
+                    zip(rec_indices, similarities), 1
+                ):
                     paper = df.iloc[idx]
-
                     with st.container():
                         col1, col2 = st.columns([4, 1])
-
                         with col1:
                             st.markdown(f"**{i}. {paper['title']}**")
                             st.caption(
-                                f"Categories: {', '.join(eval(paper['categories']))} | Published: {paper['published']}"
+                                f"Categories: "
+                                f"{', '.join(eval(paper['categories']))} "
+                                f"| Published: {paper['published']}"
                             )
                             with st.expander("View Abstract"):
                                 st.write(paper["abstract"])
-
                         with col2:
                             st.metric("Similarity", f"{sim:.3f}")
                             st.link_button(
-                                "PDF", paper["pdf_url"], use_container_width=True
+                                "PDF",
+                                paper["pdf_url"],
+                                use_container_width=True,
                             )
-
                         st.divider()
 
-    else:  # Title Keywords
+    else:
+        # Title keyword search
         title_query = st.text_input(
             "Search for keywords in titles:",
             placeholder="e.g., transformer, reinforcement learning, computer vision",
         )
 
         if title_query:
-            matches = df[df["title"].str.contains(title_query, case=False, na=False)]
+            matches = df[
+                df["title"].str.contains(title_query, case=False, na=False)
+            ]
 
             if len(matches) == 0:
-                st.warning(f"No papers found with '{title_query}' in the title.")
+                st.warning(
+                    f"No papers found with '{title_query}' in the title."
+                )
             else:
-                st.success(f"Found {len(matches)} papers matching '{title_query}'")
+                st.success(
+                    f"Found {len(matches)} papers matching '{title_query}'"
+                )
 
-                # Show first 10 matches
                 for _, paper in matches.head(10).iterrows():
                     with st.expander(f"📄 {paper['title']}"):
                         st.caption(
-                            f"ID: {paper['paper_id']} | Categories: {', '.join(eval(paper['categories']))}"
+                            f"ID: {paper['paper_id']} | Categories: "
+                            f"{', '.join(eval(paper['categories']))}"
                         )
                         st.write(paper["abstract"][:300] + "...")
 
@@ -400,10 +437,14 @@ with tab1:
                             )
                         with col2:
                             st.link_button(
-                                "📄 PDF", paper["pdf_url"], use_container_width=True
+                                "📄 PDF",
+                                paper["pdf_url"],
+                                use_container_width=True,
                             )
 
+# ---------------------------------------------------------------------------
 # Tab 2: Explore Random
+# ---------------------------------------------------------------------------
 with tab2:
     st.header("🎲 Discover Random Papers")
 
@@ -411,12 +452,13 @@ with tab2:
         random_paper = df.sample(1).iloc[0]
         random_idx = df[df["paper_id"] == random_paper["paper_id"]].index[0]
 
-        # Display random paper
         st.subheader("📄 Random Paper")
         with st.container():
             st.markdown(f"**{random_paper['title']}**")
             st.caption(
-                f"ID: {random_paper['paper_id']} | Categories: {', '.join(eval(random_paper['categories']))} | Published: {random_paper['published']}"
+                f"ID: {random_paper['paper_id']} | "
+                f"Categories: {', '.join(eval(random_paper['categories']))} "
+                f"| Published: {random_paper['published']}"
             )
             with st.expander("View Abstract"):
                 st.write(random_paper["abstract"])
@@ -430,19 +472,23 @@ with tab2:
                 )
             with col2:
                 st.link_button(
-                    "📄 View PDF", random_paper["pdf_url"], use_container_width=True
+                    "📄 View PDF",
+                    random_paper["pdf_url"],
+                    use_container_width=True,
                 )
 
-        # Show similar papers
+        # Show similar papers below the random pick
         st.subheader("🎯 Similar Papers")
         rec_indices, similarities = get_recommendations(random_idx, k=5)
 
         for i, (idx, sim) in enumerate(zip(rec_indices, similarities), 1):
             paper = df.iloc[idx]
-
-            with st.expander(f"{i}. {paper['title']} (Similarity: {sim:.3f})"):
+            with st.expander(
+                f"{i}. {paper['title']} (Similarity: {sim:.3f})"
+            ):
                 st.caption(
-                    f"Categories: {', '.join(eval(paper['categories']))} | Published: {paper['published']}"
+                    f"Categories: {', '.join(eval(paper['categories']))} "
+                    f"| Published: {paper['published']}"
                 )
                 st.write(paper["abstract"][:300] + "...")
                 col1, col2 = st.columns(2)
@@ -454,14 +500,18 @@ with tab2:
                     )
                 with col2:
                     st.link_button(
-                        "📄 View PDF", paper["pdf_url"], use_container_width=True
+                        "📄 View PDF",
+                        paper["pdf_url"],
+                        use_container_width=True,
                     )
 
+# ---------------------------------------------------------------------------
 # Tab 3: Browse by Category
+# ---------------------------------------------------------------------------
 with tab3:
     st.header("📊 Browse Papers by Category")
 
-    # Organize categories by discipline
+    # Group categories by discipline
     categories_by_discipline = {}
     for cat in df["primary_category"].unique():
         discipline = get_main_discipline(cat)
@@ -469,11 +519,10 @@ with tab3:
             categories_by_discipline[discipline] = []
         categories_by_discipline[discipline].append(cat)
 
-    # Sort disciplines and their categories
     for discipline in categories_by_discipline:
         categories_by_discipline[discipline].sort()
 
-    # First dropdown: Select discipline
+    # Discipline and subcategory selectors
     col1, col2 = st.columns(2)
 
     with col1:
@@ -481,34 +530,35 @@ with tab3:
         selected_discipline = st.selectbox(
             "1. Select Main Category:",
             disciplines,
-            index=disciplines.index("Computer Science")
-            if "Computer Science" in disciplines
-            else 0,
+            index=(
+                disciplines.index("Computer Science")
+                if "Computer Science" in disciplines
+                else 0
+            ),
         )
 
     with col2:
-        # Second dropdown: Select specific category within discipline
         available_categories = categories_by_discipline[selected_discipline]
         category_options = {
             f"{format_category(cat)}": cat for cat in available_categories
         }
-
         selected_display = st.selectbox(
             "2. Select Specific Category:", list(category_options.keys())
         )
         selected_cat = category_options[selected_display]
 
-    # Show papers in selected category
+    # Papers in selected category
     cat_papers = df[df["primary_category"] == selected_cat].copy()
 
-    # Info box with stats
+    # Summary metrics
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Papers in Category", f"{len(cat_papers):,}")
     with col2:
         if len(cat_papers) > 0:
             st.metric(
-                "Date Range", f"{cat_papers['year'].min()}-{cat_papers['year'].max()}"
+                "Date Range",
+                f"{cat_papers['year'].min()}-{cat_papers['year'].max()}",
             )
     with col3:
         if len(cat_papers) > 0:
@@ -519,28 +569,28 @@ with tab3:
 
     st.divider()
 
-    # Sort options
+    # Sort and pagination controls
     col1, col2 = st.columns([2, 1])
     with col1:
-        sort_by = st.radio("Sort by:", ["Most Recent", "Oldest First"], horizontal=True)
+        sort_by = st.radio(
+            "Sort by:", ["Most Recent", "Oldest First"], horizontal=True
+        )
     with col2:
         papers_per_page = st.selectbox("Papers per page:", [10, 20, 50], index=1)
 
-    # Sort papers
     if sort_by == "Most Recent":
         cat_papers = cat_papers.sort_values("published", ascending=False)
-    else:  # Oldest First
+    else:
         cat_papers = cat_papers.sort_values("published", ascending=True)
 
-    # Pagination
+    # Pagination state
     total_papers = len(cat_papers)
     total_pages = (total_papers + papers_per_page - 1) // papers_per_page
 
-    # Initialize page number in session state
     if "current_page" not in st.session_state:
         st.session_state.current_page = 1
 
-    # Reset page when category changes
+    # Reset page when the user changes category
     if (
         "last_category" not in st.session_state
         or st.session_state.last_category != selected_cat
@@ -548,17 +598,19 @@ with tab3:
         st.session_state.current_page = 1
         st.session_state.last_category = selected_cat
 
-    # Calculate start and end indices
     start_idx = (st.session_state.current_page - 1) * papers_per_page
     end_idx = min(start_idx + papers_per_page, total_papers)
 
-    # Display current page papers
+    # Render current page
     current_page_papers = cat_papers.iloc[start_idx:end_idx]
 
     for i, (_, paper) in enumerate(current_page_papers.iterrows(), start_idx + 1):
-        with st.expander(f"📄 {i}. {paper['title']} ({paper['published'][:4]})"):
+        with st.expander(
+            f"📄 {i}. {paper['title']} ({paper['published'][:4]})"
+        ):
             st.caption(
-                f"**ID:** {paper['paper_id']} | **Published:** {paper['published']}"
+                f"**ID:** {paper['paper_id']} "
+                f"| **Published:** {paper['published']}"
             )
             st.write(paper["abstract"][:400] + "...")
 
@@ -570,46 +622,54 @@ with tab3:
                     use_container_width=True,
                 )
             with col2:
-                st.link_button("📄 PDF", paper["pdf_url"], use_container_width=True)
+                st.link_button(
+                    "📄 PDF", paper["pdf_url"], use_container_width=True
+                )
 
     # Pagination controls
     if total_pages > 1:
         st.divider()
-
         col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
 
         with col1:
-            if st.button("⏮️ First", disabled=(st.session_state.current_page == 1)):
+            if st.button(
+                "⏮️ First", disabled=(st.session_state.current_page == 1)
+            ):
                 st.session_state.current_page = 1
                 st.rerun()
-
         with col2:
-            if st.button("◀️ Prev", disabled=(st.session_state.current_page == 1)):
+            if st.button(
+                "◀️ Prev", disabled=(st.session_state.current_page == 1)
+            ):
                 st.session_state.current_page -= 1
                 st.rerun()
-
         with col3:
             st.markdown(
-                f"<div style='text-align: center; padding-top: 5px;'>Page {st.session_state.current_page} of {total_pages} ({total_papers} total papers)</div>",
+                f"<div style='text-align: center; padding-top: 5px;'>"
+                f"Page {st.session_state.current_page} of {total_pages} "
+                f"({total_papers} total papers)</div>",
                 unsafe_allow_html=True,
             )
-
         with col4:
             if st.button(
-                "Next ▶️", disabled=(st.session_state.current_page == total_pages)
+                "Next ▶️",
+                disabled=(st.session_state.current_page == total_pages),
             ):
                 st.session_state.current_page += 1
                 st.rerun()
-
         with col5:
             if st.button(
-                "Last ⏭️", disabled=(st.session_state.current_page == total_pages)
+                "Last ⏭️",
+                disabled=(st.session_state.current_page == total_pages),
             ):
                 st.session_state.current_page = total_pages
                 st.rerun()
 
+# ---------------------------------------------------------------------------
 # Footer
+# ---------------------------------------------------------------------------
 st.divider()
 st.caption(
-    "Built with SPECTER2 embeddings, FAISS similarity search, and Streamlit | Data from arXiv API"
+    "Built with SPECTER2 embeddings, FAISS similarity search, and Streamlit "
+    "| Data from arXiv API"
 )
